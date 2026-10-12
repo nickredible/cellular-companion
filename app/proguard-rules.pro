@@ -26,3 +26,5 @@
      public void print(%);
      public void print(**);
  }
+# ML Kit creates its component registrars by name through their no-argument constructors, which R8 otherwise removes
+-keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }
