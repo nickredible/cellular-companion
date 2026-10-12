@@ -1308,9 +1308,16 @@ class BluetoothModel {
         val pendingIntent = PendingIntent.getActivity(
             context, 0, hotspotSettingsIntent(), PendingIntent.FLAG_IMMUTABLE
         )
+        // Shizuku stops when the phone restarts, so remind the user that it could have done this for them
+        ShizukuModel.refresh()
+        val text = if (ShizukuModel.status.value == ShizukuModel.Status.NotRunning) {
+            "Start Shizuku to start automatically, or tap to enable."
+        } else {
+            "Your Mac wants to connect. Tap to open hotspot settings."
+        }
         val notification = Notification.Builder(context, HOTSPOT_REQUEST_CHANNEL_ID)
             .setContentTitle("Turn on your hotspot")
-            .setContentText("Your Mac wants to connect. Tap to open hotspot settings.")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
