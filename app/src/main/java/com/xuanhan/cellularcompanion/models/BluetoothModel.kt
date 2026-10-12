@@ -439,6 +439,13 @@ class BluetoothModel {
                     // Resume an operation that was waiting for the connection
                     resumePendingOperation()
                 }
+
+                // Announce the connection with phone info that carries no values. If this app restarted without the
+                // Bluetooth link dropping, the Mac still considers it subscribed and won't be told about this
+                // subscription, so this lets it re-sync. Older versions of the Mac app accept and ignore it.
+                if (isSetupComplete) {
+                    sharePhoneInfo(-1, "-1", -1)
+                }
             } else {
                 println("Error: Failed to write to descriptor of characteristic ${descriptor?.characteristic?.uuid} with status $status")
                 if (!isDisconnecting) {
