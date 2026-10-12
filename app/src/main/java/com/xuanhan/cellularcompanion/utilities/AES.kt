@@ -23,6 +23,7 @@ class AES(password: String) {
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val cipherText = cipher.doFinal(plainText)
         val iv = cipher.iv
-        return Pair(Base64.encodeToString(cipherText, 0).trim(), iv.toHexString())
+        // NO_WRAP: the default flags insert line breaks, which older versions of the Mac app can't decode
+        return Pair(Base64.encodeToString(cipherText, Base64.NO_WRAP), iv.toHexString())
     }
 }

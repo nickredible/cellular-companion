@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -164,22 +165,22 @@ class BluetoothModel {
                         }
                     }
 
+                    // Keep scanning if this isn't the paired Mac
+                    if (!isFirstInitializing && address != deviceAddress) {
+                        println("Error: Device address $address does not match paired device address.")
+                        return
+                    }
+
                     // Stop scan
                     stopScan()
 
                     println("Found Bluetooth device: ${result.scanRecord?.serviceUuids} $name $address")
                     println("Now attempting to connect to Bluetooth device.")
 
-                    val address = result.device.address
-                    if (!isFirstInitializing && address != deviceAddress) {
-                        println("Error: Device address does not match paired device address.")
-                        return
-                    }
-
-                    // Connect to the device
+                    // Connect to the device, keeping the client so that it can be closed if the connection fails
                     isConnecting = true
                     connectDevice = this
-                    connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    this@BluetoothModel.gatt = connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
                 }
             }
         }
@@ -250,9 +251,12 @@ class BluetoothModel {
             } else {
                 if (isConnecting) {
                     // Retry connection if it fails (up to 3 times)
+                    // Close the failed client: Android only has a limited number of them
+                    gatt?.close()
+
                     if (connectionRetryCount < 3) {
                         connectionRetryCount++
-                        connectDevice!!.connectGatt(
+                        this@BluetoothModel.gatt = connectDevice!!.connectGatt(
                             context,
                             false,
                             this,
@@ -269,6 +273,7 @@ class BluetoothModel {
                         }
 
                         isConnecting = false
+                        this@BluetoothModel.gatt = null
 
                         // Start scan for devices again
                         startScan()
@@ -367,28 +372,11 @@ class BluetoothModel {
                         onBonded()
                     }
                     return
-                } else if (isSharingHotspotDetails) {
-                    // Share hotspot details to device
-                    shareHotspotDetails2?.invoke()
-                    return
-                } else if (isSharingPhoneInfo) {
-                    // Share phone info to device
-                    sharePhoneInfo2?.invoke()
-                    return
-                } else if (isConnectingToHotspot) {
-                    // Request device to connect to hotspot
-                    connectHotspot2?.invoke()
-                    return
-                } else if (isDisconnectingFromHotspot) {
-                    // Request device to disconnect from hotspot
-                    disconnectHotspot2?.invoke()
-                } else if (isIndicatingReset) {
-                    // Indicate reset to device
-                    indicateReset?.invoke()
-                    return
                 }
 
-                // Subscribe to notifications on the notification characteristic
+                // Subscribe to notifications on the notification characteristic. This must happen on every
+                // connection, because the Mac only considers this device connected once it has subscribed. Any
+                // operation that was waiting for the connection resumes once the subscription is written.
                 enableNotifications()
             } else {
                 onUnexpectedErrorCallback?.invoke {
@@ -409,19 +397,30 @@ class BluetoothModel {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 println("Write to descriptor of characteristic ${descriptor!!.characteristic.uuid}")
 
+                // Indicate that device is connected
+                _connectStatus.value = ConnectStatus.Idle
+
                 if (isInitializing) {
                     // Indicate that initialization is complete
                     initOnConnectCallback?.invoke()
                     indicateOperationComplete()
+                } else {
+                    // Resume an operation that was waiting for the connection
+                    resumePendingOperation()
                 }
-
-                // Indicate that device is connected
-                _connectStatus.value = ConnectStatus.Idle
             } else {
-                println("Error: Failed to write to descriptor of characteristic ${descriptor!!.characteristic.uuid} with status $status")
+                println("Error: Failed to write to descriptor of characteristic ${descriptor?.characteristic?.uuid} with status $status")
                 if (!isDisconnecting) {
                     // Indicate that device is disconnected
                     _connectStatus.value = ConnectStatus.Disconnected
+                }
+
+                // Without the subscription the Mac never considers this device connected, so start over (unless
+                // this was the unsubscription while unlinking)
+                if (isSetupComplete && !isDisconnecting) {
+                    disconnect()
+                    resetBLE()
+                    startScan()
                 }
             }
         }
@@ -462,84 +461,67 @@ class BluetoothModel {
 
                 indicateOperationComplete()
             } else {
-                println("Error: Failed to write to characteristic ${characteristic!!.uuid} with status $status")
-
-                if (isFirstInitializing) {
-                    val initOnConnectCallback = initOnConnectCallback
-                    onConnectFailedCallback?.invoke {
-                        resetBLE()
-                        isFirstInitializing = true
-                        this@BluetoothModel.initOnConnectCallback = initOnConnectCallback
-                        initialize(context)
-                    }
-                } else if (isSharingHotspotDetails) {
-                    if (hotspotShareRetryCount < 5) {
-                        // Retry sharing hotspot details to device
-                        shareHotspotDetails2?.invoke()
-                        hotspotShareRetryCount++
-                    } else {
-                        // Show error message
-                        hotspotDetailsRetryCallback?.let {
-                            onHotspotDetailsShareFailedCallback?.invoke(it)
-                        }
-                    }
-                } else if (isIndicatingReset) {
-                    onResetFailedCallback?.invoke {
-                        resetBLE()
-                        reset()
-                    }
-                } else {
-                    disconnect()
-                    resetBLE()
-                    startScan()
-                }
+                println("Error: Failed to write to characteristic ${characteristic?.uuid} with status $status")
+                onCommandWriteFailed()
             }
         }
 
         override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            handleNotification(characteristic, value)
+        }
+
+        @Deprecated("Only called before Android 13")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicChanged(
             gatt: BluetoothGatt?,
             characteristic: BluetoothGattCharacteristic?
         ) {
-            super.onCharacteristicChanged(gatt, characteristic)
-
             if (characteristic != null) {
-                val text = String(characteristic.value)
-                println("Received data from characteristic ${characteristic.uuid}: $text")
+                handleNotification(characteristic, characteristic.value)
+            }
+        }
 
-                when (text) {
-                    NotificationType.EnableHotspot -> {
-                        println("Enabling hotspot...")
-                        enableHotspot()
-                    }
+        private fun handleNotification(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            val text = String(value)
+            println("Received data from characteristic ${characteristic.uuid}: $text")
 
-                    NotificationType.DisableHotspot -> {
-                        println("Disabling hotspot...")
-                        disableHotspot(indicateOnly = true)
-                    }
+            when (text) {
+                NotificationType.EnableHotspot -> {
+                    println("Enabling hotspot...")
+                    enableHotspot()
+                }
 
-                    NotificationType.IndicateConnectedHotspot -> {
-                        println("Indicating device connected to hotspot...")
-                        indicateConnectedHotspot()
-                    }
+                NotificationType.DisableHotspot -> {
+                    println("Disabling hotspot...")
+                    disableHotspot(indicateOnly = true)
+                }
 
-                    NotificationType.EnableSeePhoneInfo -> {
-                        println("Enabling see phone info...")
-                        _isSeePhoneInfoEnabled.value = true
-                    }
+                NotificationType.IndicateConnectedHotspot -> {
+                    println("Indicating device connected to hotspot...")
+                    indicateConnectedHotspot()
+                }
 
-                    NotificationType.DisableSeePhoneInfo -> {
-                        println("Disabling see phone info...")
-                        _isSeePhoneInfoEnabled.value = false
-                    }
+                NotificationType.EnableSeePhoneInfo -> {
+                    println("Enabling see phone info...")
+                    _isSeePhoneInfoEnabled.value = true
+                }
 
-                    NotificationType.IndicateReset -> {
-                        println("Unlinking from Mac...")
-                        reset(indicateOnly = true)
-                    }
+                NotificationType.DisableSeePhoneInfo -> {
+                    println("Disabling see phone info...")
+                    _isSeePhoneInfoEnabled.value = false
+                }
 
-                    else -> {
-                        println("Error: Received unknown payload from characteristic.")
-                    }
+                NotificationType.IndicateReset -> {
+                    println("Unlinking from Mac...")
+                    reset(indicateOnly = true)
+                }
+
+                else -> {
+                    println("Error: Received unknown payload from characteristic.")
                 }
             }
         }
@@ -607,17 +589,11 @@ class BluetoothModel {
                     isConnectingToHotspot = true
 
                     connectHotspot2 = {
-                        commandCharacteristic!!.writeType =
-                            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        commandCharacteristic!!.value = CommandType.ConnectToHotspot.toByteArray()
-                        gatt!!.writeCharacteristic(commandCharacteristic!!)
+                        writeCommand(CommandType.ConnectToHotspot)
                     }
 
-                    if (bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-                            .find { it.address == connectDevice?.address } == null
-                        || gatt == null || commandCharacteristic == null
-                    ) {
-                        startScan()
+                    if (!isReady()) {
+                        ensureConnection()
                     } else {
                         connectHotspot2!!.invoke()
                     }
@@ -637,8 +613,15 @@ class BluetoothModel {
             _connectStatus.value = ConnectStatus.Disconnected
 
             // Disable notifications for characteristic if needed
-            if (gatt != null) {
-                gatt!!.setCharacteristicNotification(notificationCharacteristic!!, false)
+            val notificationCharacteristic = notificationCharacteristic
+            if (gatt != null && notificationCharacteristic != null) {
+                gatt!!.setCharacteristicNotification(notificationCharacteristic, false)
+            }
+
+            // Operations queued for the old connection are stale: the hotspot is turned off below, and phone info is
+            // resent when the Mac re-enables it after reconnecting
+            if (!isInitializing) {
+                abandonOperations()
             }
 
             // Disable hotspot if enabled
@@ -699,6 +682,136 @@ class BluetoothModel {
         onHotspotDetailsSharedCallback = null
 
         doNextOperation()
+    }
+
+    /**
+     * This function handles a write to the command characteristic that failed or could not be started.
+     * */
+    private fun onCommandWriteFailed() {
+        if (isFirstInitializing) {
+            val initOnConnectCallback = initOnConnectCallback
+            onConnectFailedCallback?.invoke {
+                resetBLE()
+                isFirstInitializing = true
+                this@BluetoothModel.initOnConnectCallback = initOnConnectCallback
+                initialize(context)
+            }
+        } else if (isSharingHotspotDetails) {
+            if (hotspotShareRetryCount < 5) {
+                // Retry sharing hotspot details to device. Count first: a write that can't start fails synchronously.
+                hotspotShareRetryCount++
+                shareHotspotDetails2?.invoke()
+            } else {
+                // Show error message
+                hotspotDetailsRetryCallback?.let {
+                    onHotspotDetailsShareFailedCallback?.invoke(it)
+                }
+            }
+        } else if (isIndicatingReset) {
+            onResetFailedCallback?.invoke {
+                resetBLE()
+                reset()
+            }
+        } else {
+            // Drop the failed operation so that the queue doesn't stay blocked forever, then reconnect.
+            // State is re-synced with the Mac once it reconnects.
+            abandonOperations()
+            disconnect()
+            resetBLE()
+            startScan()
+        }
+    }
+
+    /**
+     * This function drops the running operation and every queued operation.
+     * */
+    @Synchronized
+    private fun abandonOperations() {
+        operationQueue.clear()
+        indicateOperationComplete()
+    }
+
+    /**
+     * This function resumes an operation that was waiting for the connection to the Mac to be established.
+     * */
+    private fun resumePendingOperation() {
+        when {
+            isSharingHotspotDetails -> shareHotspotDetails2?.invoke()
+            isSharingPhoneInfo -> sharePhoneInfo2?.invoke()
+            isConnectingToHotspot -> connectHotspot2?.invoke()
+            isDisconnectingFromHotspot -> disconnectHotspot2?.invoke()
+            isIndicatingReset -> indicateReset?.invoke()
+        }
+    }
+
+    /**
+     * This function writes a command to the Mac's command characteristic. If the write can't be started, it is
+     * handled like a failed write so that the operation queue never waits for a callback that won't come.
+     * @param payload The command to write.
+     * */
+    @SuppressLint("MissingPermission")
+    private fun writeCommand(payload: String) {
+        val gatt = gatt
+        val commandCharacteristic = commandCharacteristic
+        if (gatt == null || commandCharacteristic == null) {
+            println("Error: Cannot write command, device is unavailable.")
+            onCommandWriteFailed()
+            return
+        }
+
+        val value = payload.toByteArray()
+        val isStarted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(
+                commandCharacteristic,
+                value,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            ) == BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            commandCharacteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            @Suppress("DEPRECATION")
+            commandCharacteristic.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(commandCharacteristic)
+        }
+
+        if (!isStarted) {
+            println("Error: Could not start writing command $payload")
+            onCommandWriteFailed()
+        }
+    }
+
+    /**
+     * This function writes a value to the client characteristic configuration descriptor of the notification
+     * characteristic.
+     * @return Whether the write was started.
+     * */
+    @SuppressLint("MissingPermission")
+    private fun writeNotificationDescriptor(value: ByteArray): Boolean {
+        val gatt = gatt ?: return false
+        val descriptor = notificationCharacteristic?.getDescriptor(cccdUuid) ?: return false
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            descriptor.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(descriptor)
+        }
+    }
+
+    /**
+     * This function starts connecting to the Mac unless a connection is already being established. Operations that
+     * need the connection resume once it is established.
+     * */
+    private fun ensureConnection() {
+        if (isScanning || bleScanTimer != null || gatt != null) {
+            println("Connection to the Mac is already being established.")
+            return
+        }
+
+        startScan()
     }
 
     /**
@@ -813,16 +926,11 @@ class BluetoothModel {
             }
         }
 
-        if (bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-                .find { it.address == connectDevice?.address } == null
-            || gatt == null || commandCharacteristic == null
-        ) {
+        if (!isReady()) {
             startScan()
         } else {
             // Write Hello World command to command characteristic
-            commandCharacteristic!!.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            commandCharacteristic!!.value = CommandType.HelloWorld.toByteArray()
-            gatt!!.writeCharacteristic(commandCharacteristic!!)
+            writeCommand(CommandType.HelloWorld)
         }
     }
 
@@ -830,6 +938,12 @@ class BluetoothModel {
      * This function starts the scan for BLE devices matching the set service UUID. The serviceUUID variable has to be set before calling this function.
      * */
     private fun startScan() {
+        // A scan is already scheduled; starting another would leave two timers rescanning forever
+        if (bleScanTimer != null) {
+            println("Scan already scheduled.")
+            return
+        }
+
         // Schedule repeating 29min 30s timer
         bleScanTimer = Timer()
         bleScanTimer!!.schedule(object : TimerTask() {
@@ -893,15 +1007,24 @@ class BluetoothModel {
             // Stop BLE scan
             bluetoothAdapter.bluetoothLeScanner.stopScan(bleScanCallback)
 
-            // Stop BLE scan timer if needed
-            if (stopScanTimer) {
-                bleScanTimer?.cancel()
-                bleScanTimer = null
-            }
-
             // Set isScanning to false
             isScanning = false
         }
+
+        // Stop BLE scan timer if needed (it may be scheduled even before the first scan starts)
+        if (stopScanTimer) {
+            bleScanTimer?.cancel()
+            bleScanTimer = null
+        }
+    }
+
+    /**
+     * This function checks whether the Mac is connected and its characteristics have been discovered.
+     * */
+    @SuppressLint("MissingPermission")
+    private fun isReady(): Boolean {
+        return gatt != null && commandCharacteristic != null && bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+            .any { it.address == connectDevice?.address }
     }
 
     /**
@@ -949,13 +1072,13 @@ class BluetoothModel {
             }
         }
 
-        val descriptor = notificationCharacteristic!!.getDescriptor(cccdUuid)
         gatt!!.setCharacteristicNotification(notificationCharacteristic!!, true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt!!.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
-        } else {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-            gatt!!.writeDescriptor(descriptor)
+        if (!writeNotificationDescriptor(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)) {
+            // Without the subscription the Mac never considers this device connected, so start over
+            println("Error: Could not subscribe to notifications, reconnecting.")
+            disconnect()
+            resetBLE()
+            startScan()
         }
     }
 
@@ -1004,11 +1127,8 @@ class BluetoothModel {
         this.onHotspotDetailsSharedCallback = onHotspotDetailsSharedCallback
 
         shareHotspotDetails2 = {
-            commandCharacteristic!!.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             val (cipherText, iv) = aes.encrypt("\"$ssid\" \"$password\"")
-            commandCharacteristic!!.value =
-                "${CommandType.ShareHotspotDetails} $iv $cipherText".toByteArray()
-            gatt!!.writeCharacteristic(commandCharacteristic!!)
+            writeCommand("${CommandType.ShareHotspotDetails} $iv $cipherText")
         }
 
         hotspotDetailsRetryCallback = {
@@ -1016,11 +1136,8 @@ class BluetoothModel {
             startShareHotspotDetails(ssid, password, onHotspotDetailsSharedCallback)
         }
 
-        if (bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-                .find { it.address == connectDevice?.address } == null
-            || gatt == null || commandCharacteristic == null
-        ) {
-            startScan()
+        if (!isReady()) {
+            ensureConnection()
         } else {
             shareHotspotDetails2!!.invoke()
         }
@@ -1072,17 +1189,11 @@ class BluetoothModel {
         isSharingPhoneInfo = true
 
         sharePhoneInfo2 = {
-            commandCharacteristic!!.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            commandCharacteristic!!.value =
-                "${CommandType.SharePhoneInfo} $signalLevel $networkType $batteryPercentage".toByteArray()
-            gatt!!.writeCharacteristic(commandCharacteristic!!)
+            writeCommand("${CommandType.SharePhoneInfo} $signalLevel $networkType $batteryPercentage")
         }
 
-        if (bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-                .find { it.address == connectDevice?.address } == null
-            || gatt == null || commandCharacteristic == null
-        ) {
-            startScan()
+        if (!isReady()) {
+            ensureConnection()
         } else {
             sharePhoneInfo2!!.invoke()
         }
@@ -1136,17 +1247,11 @@ class BluetoothModel {
                 isDisconnectingFromHotspot = true
 
                 disconnectHotspot2 = {
-                    commandCharacteristic!!.writeType =
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                    commandCharacteristic!!.value = CommandType.DisconnectFromHotspot.toByteArray()
-                    gatt!!.writeCharacteristic(commandCharacteristic!!)
+                    writeCommand(CommandType.DisconnectFromHotspot)
                 }
 
-                if (bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-                        .find { it.address == connectDevice?.address } == null
-                    || gatt == null || commandCharacteristic == null
-                ) {
-                    startScan()
+                if (!isReady()) {
+                    ensureConnection()
                 } else {
                     disconnectHotspot2!!.invoke()
                 }
@@ -1192,8 +1297,18 @@ class BluetoothModel {
     /**
      * This function resets the BLE connection to allow reconnecting to a BLE device.
      * */
+    @SuppressLint("MissingPermission")
     private fun resetBLE(stopScanTimer: Boolean = true) {
         stopScan(stopScanTimer = stopScanTimer)
+
+        // Release the GATT client. Android only has a limited number of them, so leaking one per reconnect eventually
+        // makes every connection attempt fail.
+        try {
+            gatt?.disconnect()
+            gatt?.close()
+        } catch (e: SecurityException) {
+            println("Error: Could not close GATT client: ${e.message}")
+        }
 
         connectDevice = null
         gatt = null
@@ -1231,19 +1346,19 @@ class BluetoothModel {
             }
         }
 
-        // Indicate to the Mac that this device is being unlinked
-        isIndicatingReset = true
-
         if (indicateOnly || gatt == null || commandCharacteristic == null) {
             // Skip notifying the Mac that reset has started if the Mac is not connected
+            isIndicatingReset = true
             reset2()
         } else {
-            // Notify the Mac that reset has started
+            // Notify the Mac that reset has started. The flag is only set once this operation runs, so that an
+            // operation still in flight doesn't mistake its own completion for the reset's.
             enqueueOperation {
-                commandCharacteristic!!.writeType =
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                commandCharacteristic!!.value = CommandType.IndicateReset.toByteArray()
-                gatt!!.writeCharacteristic(commandCharacteristic!!)
+                isIndicatingReset = true
+                indicateReset = {
+                    writeCommand(CommandType.IndicateReset)
+                }
+                indicateReset!!.invoke()
             }
         }
     }
@@ -1281,17 +1396,8 @@ class BluetoothModel {
     private fun reset2() {
         // Disable notifications
         if (gatt != null && notificationCharacteristic != null) {
-            val descriptor = notificationCharacteristic!!.getDescriptor(cccdUuid)
             gatt!!.setCharacteristicNotification(notificationCharacteristic!!, false)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt!!.writeDescriptor(
-                    descriptor,
-                    BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-                )
-            } else {
-                descriptor.value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-                gatt!!.writeDescriptor(descriptor)
-            }
+            writeNotificationDescriptor(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)
         }
 
         // Un-bond from device
@@ -1333,14 +1439,8 @@ class BluetoothModel {
         // This part is run 1.5s later to allow the Mac to receive and process the reset command
         Timer().schedule(object : TimerTask() {
             override fun run() {
-                // Disconnect from device
-                gatt?.disconnect()
-
-                // Reset BLE connection
+                // Disconnect from device and close the GATT client
                 resetBLE()
-
-                // Close GATT
-                gatt?.close()
 
                 // Let view model know that reset is complete
                 onResetCompleteCallback!!.invoke()
