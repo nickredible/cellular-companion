@@ -42,7 +42,7 @@ fun Intro(navigator: DestinationsNavigator) {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Ensure that you have purchased the Cellular app on the Mac App Store prior to setup.",
+                text = "Before you start, install Cellular on your Mac. You can download it from github.com/nickredible/cellular.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.height(48.dp))
