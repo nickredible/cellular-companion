@@ -49,11 +49,11 @@ android {
 }
 
 dependencies {
-    val cameraxVersion = "1.3.0"
+    val cameraxVersion = "1.6.2"
     implementation("androidx.camera:camera-camera2:${cameraxVersion}")
     implementation("androidx.camera:camera-lifecycle:${cameraxVersion}")
     implementation("androidx.camera:camera-view:${cameraxVersion}")
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("com.google.accompanist:accompanist-permissions:0.31.3-beta")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.30.1")
     implementation("io.github.raamcosta.compose-destinations:animations-core:1.9.42-beta")
