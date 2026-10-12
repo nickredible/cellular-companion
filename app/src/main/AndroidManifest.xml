@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"
-        android:maxSdkVersion="27" />
+    <!-- Needed on every version to receive hotspot state changes -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"
         android:maxSdkVersion="27" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

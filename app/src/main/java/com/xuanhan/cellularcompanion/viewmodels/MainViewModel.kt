@@ -32,10 +32,6 @@ class MainViewModel: ViewModel() {
     val isShowingBondFailedDialog: StateFlow<Boolean> =
         _isShowingBondFailedDialog.asStateFlow()
     private lateinit var retryBondFailedDialogCallback: () -> Unit
-    private val _isShowingHotspotFailedDialog = MutableStateFlow(false)
-    val isShowingHotspotFailedDialog: StateFlow<Boolean> =
-        _isShowingHotspotFailedDialog.asStateFlow()
-    private lateinit var retryHotspotFailedDialogCallback: () -> Unit
     private val _isShowingResetFailedDialog = MutableStateFlow(false)
     val isShowingResetFailedDialog: StateFlow<Boolean> =
         _isShowingResetFailedDialog.asStateFlow()
@@ -51,7 +47,6 @@ class MainViewModel: ViewModel() {
             ::showHotspotDetailsShareFailedDialog,
             ::showConnectFailedDialog,
             ::showBondFailedDialog,
-            ::showHotspotFailedDialog,
             ::showResetFailedDialog
         )
 
@@ -110,16 +105,6 @@ class MainViewModel: ViewModel() {
     fun confirmBondFailedDialog() {
         _isShowingBondFailedDialog.value = false
         retryBondFailedDialogCallback()
-    }
-
-    private fun showHotspotFailedDialog(retryCallback: () -> Unit) {
-        _isShowingHotspotFailedDialog.value = true
-        retryHotspotFailedDialogCallback = retryCallback
-    }
-
-    fun confirmHotspotFailedDialog() {
-        _isShowingHotspotFailedDialog.value = false
-        retryHotspotFailedDialogCallback()
     }
 
     private fun showResetFailedDialog(retryCallback: () -> Unit) {

@@ -15,12 +15,20 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.xuanhan.cellularcompanion.R
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -101,7 +109,6 @@ class BluetoothModel {
     private var onConnectFailedCallback: ((() -> Unit) -> Unit)? = null
     private var onBondFailedCallback: ((() -> Unit) -> Unit)? = null
     private var onHotspotDetailsShareFailedCallback: ((() -> Unit) -> Unit)? = null
-    private var onHotspotFailedCallback: ((() -> Unit) -> Unit)? = null
     private var onResetFailedCallback: ((() -> Unit) -> Unit)? = null
     private var onResetCompleteCallback: (() -> Unit)? = null
 
@@ -112,6 +119,14 @@ class BluetoothModel {
     val connectStatus: StateFlow<ConnectStatus> = _connectStatus.asStateFlow()
     private val _isSeePhoneInfoEnabled: MutableStateFlow<Boolean> = MutableStateFlow(false)
     val isSeePhoneInfoEnabled: StateFlow<Boolean> = _isSeePhoneInfoEnabled.asStateFlow()
+    private val _isAwaitingUserHotspot: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    /**
+     * Whether the user has been asked to turn on the hotspot themselves, because this app isn't allowed to (Android 16+).
+     * */
+    val isAwaitingUserHotspot: StateFlow<Boolean> = _isAwaitingUserHotspot.asStateFlow()
+    private var awaitingUserHotspotTimer: Timer? = null
+    private var isHotspotStateReceiverRegistered = false
 
     class NotificationType {
         companion object {
@@ -136,6 +151,22 @@ class BluetoothModel {
     }
 
     companion object {
+        // Hidden constants from WifiManager. The broadcast is protected, so only the system can send it.
+        private const val ACTION_WIFI_AP_STATE_CHANGED = "android.net.wifi.WIFI_AP_STATE_CHANGED"
+        private const val EXTRA_WIFI_AP_STATE = "wifi_state"
+        private const val WIFI_AP_STATE_DISABLED = 11
+        private const val WIFI_AP_STATE_ENABLED = 13
+
+        private const val HOTSPOT_REQUEST_CHANNEL_ID = "hotspot_requests"
+        private const val HOTSPOT_REQUEST_NOTIFICATION_ID = 2
+        private const val AWAITING_USER_HOTSPOT_TIMEOUT_MS = 120_000L
+
+        /**
+         * An intent that opens the system's "Hotspot & tethering" settings.
+         * */
+        fun hotspotSettingsIntent() = Intent("android.settings.TETHER_SETTINGS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
         enum class ConnectStatus {
             Disconnected,
             Idle,
@@ -557,9 +588,7 @@ class BluetoothModel {
 
         override fun onTetheringFailed() {
             println("Hotspot failed to start")
-            onHotspotFailedCallback?.invoke {
-                enableHotspot()
-            }
+            requestHotspotFromUser()
         }
     }
 
@@ -905,6 +934,7 @@ class BluetoothModel {
         bluetoothAdapter = bluetoothManager.adapter
         aes = AES(sharedKey!!)
         wifiHotspotManager = WifiHotspotManager(context)
+        registerHotspotStateReceiver()
 
         // Start BLE scan
         startScan()
@@ -1208,9 +1238,117 @@ class BluetoothModel {
 
         if (wifiHotspotManager.isTetherActive) {
             onTetheringStarted()
-        } else {
-            wifiHotspotManager.startTethering(myHotspotOnStartTetheringCallback)
+        } else if (!wifiHotspotManager.startTethering(myHotspotOnStartTetheringCallback)) {
+            requestHotspotFromUser()
         }
+    }
+
+    /**
+     * This function asks the user to turn on the hotspot, for when this app isn't allowed to (Android 16+). The Mac is
+     * told to connect as soon as the hotspot turns on, however the user turns it on.
+     * */
+    private fun requestHotspotFromUser() {
+        println("Asking the user to turn on the hotspot")
+        _isAwaitingUserHotspot.value = true
+
+        // Give up eventually so that neither device waits forever
+        awaitingUserHotspotTimer?.cancel()
+        awaitingUserHotspotTimer = Timer().apply {
+            schedule(object : TimerTask() {
+                override fun run() {
+                    if (_isAwaitingUserHotspot.value) {
+                        println("The hotspot was not turned on in time")
+                        disableHotspot()
+                    }
+                }
+            }, AWAITING_USER_HOTSPOT_TIMEOUT_MS)
+        }
+
+        showHotspotRequestNotification()
+    }
+
+    /**
+     * This function stops waiting for the user to turn on the hotspot.
+     * */
+    private fun stopAwaitingUserHotspot() {
+        _isAwaitingUserHotspot.value = false
+        awaitingUserHotspotTimer?.cancel()
+        awaitingUserHotspotTimer = null
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(HOTSPOT_REQUEST_NOTIFICATION_ID)
+    }
+
+    /**
+     * This function shows a notification asking the user to turn on the hotspot.
+     * */
+    private fun showHotspotRequestNotification() {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            println("Error: The Post Notifications permission has not been granted.")
+            return
+        }
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            HOTSPOT_REQUEST_CHANNEL_ID,
+            "Hotspot requests",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        channel.description = "Asks you to turn on your hotspot when your Mac needs it."
+        notificationManager.createNotificationChannel(channel)
+
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, hotspotSettingsIntent(), PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = Notification.Builder(context, HOTSPOT_REQUEST_CHANNEL_ID)
+            .setContentTitle("Turn on your hotspot")
+            .setContentText("Your Mac wants to connect. Tap to open hotspot settings.")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_CALL)
+            .build()
+        notificationManager.notify(HOTSPOT_REQUEST_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * This receiver follows the hotspot being turned on or off outside this app, e.g. from Quick Settings.
+     * */
+    private val hotspotStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getIntExtra(EXTRA_WIFI_AP_STATE, -1)) {
+                WIFI_AP_STATE_ENABLED -> if (_isAwaitingUserHotspot.value) {
+                    println("The user turned on the hotspot")
+                    stopAwaitingUserHotspot()
+                    onTetheringStarted()
+                }
+
+                WIFI_AP_STATE_DISABLED -> if (
+                    _connectStatus.value == ConnectStatus.Connecting && !_isAwaitingUserHotspot.value ||
+                    _connectStatus.value == ConnectStatus.Connected
+                ) {
+                    // Let the Mac know right away instead of waiting for it to notice the network disappear
+                    println("The hotspot was turned off outside Cellular")
+                    disableHotspot()
+                }
+            }
+        }
+    }
+
+    /**
+     * This function starts following the hotspot's state.
+     * */
+    private fun registerHotspotStateReceiver() {
+        if (isHotspotStateReceiverRegistered) return
+
+        ContextCompat.registerReceiver(
+            context.applicationContext,
+            hotspotStateReceiver,
+            IntentFilter(ACTION_WIFI_AP_STATE_CHANGED),
+            ContextCompat.RECEIVER_EXPORTED
+        )
+        isHotspotStateReceiverRegistered = true
     }
 
     /**
@@ -1219,6 +1357,8 @@ class BluetoothModel {
      * @param isDisconnecting Whether the hotspot is being disabled due to this device disconnecting from the Mac.
      * */
     fun disableHotspot(indicateOnly: Boolean = false, isDisconnecting: Boolean = false) {
+        stopAwaitingUserHotspot()
+
         if (!isDisconnecting) {
             // Indicate that hotspot is disconnected
             _connectStatus.value = ConnectStatus.Idle
@@ -1273,7 +1413,6 @@ class BluetoothModel {
      * @param onHotspotDetailsShareFailedCallback The callback function to be called when sharing hotspot details fails.
      * @param onConnectFailedCallback The callback function to be called when connecting to the Mac fails.
      * @param onBondFailedCallback The callback function to be called when bonding fails.
-     * @param onHotspotFailedCallback The callback function to be called when enabling hotspot fails.
      * @param onResetFailedCallback The callback function to be called when unlinking from the Mac fails.
      * */
     fun registerForErrorHandling(
@@ -1282,7 +1421,6 @@ class BluetoothModel {
         onHotspotDetailsShareFailedCallback: (() -> Unit) -> Unit,
         onConnectFailedCallback: (() -> Unit) -> Unit,
         onBondFailedCallback: (() -> Unit) -> Unit,
-        onHotspotFailedCallback: (() -> Unit) -> Unit,
         onResetFailedCallback: (() -> Unit) -> Unit
     ) {
         this.onScanFailedCallback = onScanFailedCallback
@@ -1290,7 +1428,6 @@ class BluetoothModel {
         this.onConnectFailedCallback = onConnectFailedCallback
         this.onBondFailedCallback = onBondFailedCallback
         this.onHotspotDetailsShareFailedCallback = onHotspotDetailsShareFailedCallback
-        this.onHotspotFailedCallback = onHotspotFailedCallback
         this.onResetFailedCallback = onResetFailedCallback
     }
 

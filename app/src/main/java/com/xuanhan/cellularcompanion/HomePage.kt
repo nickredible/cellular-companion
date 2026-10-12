@@ -40,6 +40,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.xuanhan.cellularcompanion.destinations.AboutDestination
 import com.xuanhan.cellularcompanion.destinations.ChangeHotspotCredentialsDestination
+import com.xuanhan.cellularcompanion.models.BluetoothModel
 import com.xuanhan.cellularcompanion.models.BluetoothModel.Companion.ConnectStatus
 import com.xuanhan.cellularcompanion.utilities.NoRippleTheme
 import com.xuanhan.cellularcompanion.viewmodels.HomePageViewModel
@@ -54,6 +55,7 @@ fun HomePage(navigator: DestinationsNavigator) {
 
     val isPressed by interactionSource.collectIsPressedAsState()
     val connectStatus by bluetoothModel.connectStatus.collectAsState()
+    val isAwaitingUserHotspot by bluetoothModel.isAwaitingUserHotspot.collectAsState()
     val isShowingConfirmUnlinkDialog by viewModel.isShowingConfirmUnlinkDialog.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
@@ -111,6 +113,19 @@ fun HomePage(navigator: DestinationsNavigator) {
                         ConnectStatus.Connected -> "Connected"
                     }
                 )
+                if (isAwaitingUserHotspot) {
+                    // Android 16+ doesn't let apps turn on the hotspot, so the user has to
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Turn on your hotspot to connect your Mac.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    TextButton(onClick = {
+                        context.startActivity(BluetoothModel.hotspotSettingsIntent())
+                    }) {
+                        Text("Open hotspot settings")
+                    }
+                }
                 Spacer(modifier = Modifier.weight(1f))
                 CompositionLocalProvider(LocalRippleTheme provides NoRippleTheme) {
                     val borderColor = when (connectStatus) {
