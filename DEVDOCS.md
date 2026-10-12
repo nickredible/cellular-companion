@@ -101,4 +101,10 @@ Since Android 16, starting tethering requires `TETHER_PRIVILEGED`, which only sy
 
 Once a day, `UpdateModel` asks GitHub for the latest release of `nickredible/cellular-companion` and compares its tag with the app's `versionName`, ignoring a leading "v". If the release is newer, the app shows it on the home screen and posts a notification once per version that opens the release page. Nothing is downloaded or installed automatically. Users can turn this off on the About screen.
 
-To release a version, raise `versionCode` and set `versionName` in `app/build.gradle.kts`, then publish a GitHub release whose tag is that version (e.g. `1.2.0` or `v1.2.0`) with the APK attached. Android only installs an update over an existing install if both are signed with the same key, so build every release on the same machine (debug builds are signed with that machine's `~/.android/debug.keystore`). Pre-releases and drafts are not offered as updates.
+To release a version:
+
+1. Raise `versionCode` and set `versionName` in `app/build.gradle.kts`.
+2. Run `scripts/build-release.sh`, which builds `build/CellularCompanion-<version>.apk`.
+3. Publish a GitHub release whose tag is that version (e.g. `1.2.0` or `v1.2.0`) with the APK attached. Pre-releases and drafts are not offered as updates.
+
+Releases are signed with a debug keystore (by default `~/.android/debug.keystore`; set `CELLULAR_COMPANION_KEYSTORE` to use another), whose certificate is the generic "Android Debug" one, so it doesn't identify whoever built them. Android only installs an update over an existing install if both are signed with the same key, so every release must use the same keystore. Keep a backup of it.
