@@ -64,6 +64,13 @@ Notification characteristic messages:
 3. The Android device writes the "Connect to hotspot" command to the Mac's command characteristic.
 4. The Mac receives the command and connects to the hotspot using the saved SSID and password.
 
+#### Turning on the hotspot on Android 16+
+
+Since Android 16, starting tethering requires `TETHER_PRIVILEGED`, which only system apps and the shell user hold, so step 2 depends on how the app is set up:
+
+* **With [Shizuku](https://shizuku.rikka.app/)**, the app starts and stops tethering as the shell user. `WifiHotspotManager` makes a `TetheringManager` whose binder calls go through Shizuku, and whose context reports `com.android.shell` as its package. `ShizukuModel` follows whether Shizuku is installed, running and has allowed the app, and the home screen walks the user through whatever is missing. Shizuku has to be started again after the phone restarts, unless it is started with root or set to start on boot.
+* **Without Shizuku**, starting tethering fails, so the app shows a notification and a prompt asking the user to turn on the hotspot. When the hotspot turns on, however it was turned on, the app continues from step 3. It gives up after 2 minutes.
+
 ### Disconnecting from hotspot
 
 **If initiated on the Mac:**
