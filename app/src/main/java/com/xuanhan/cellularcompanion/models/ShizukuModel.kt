@@ -1,7 +1,9 @@
 package com.xuanhan.cellularcompanion.models
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.IBinder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,8 @@ object ShizukuModel {
     }
 
     private const val PACKAGE_NAME = "moe.shizuku.privileged.api"
+    private const val PERMISSION_REQUEST_CODE = 1
+    private const val DOWNLOAD_URL = "https://shizuku.rikka.app/download/"
 
     private lateinit var appContext: Context
     private val _status = MutableStateFlow(Status.NotRunning)
@@ -85,6 +89,32 @@ object ShizukuModel {
         } catch (e: PackageManager.NameNotFoundException) {
             false
         }
+    }
+
+    /**
+     * This function moves the user one step closer to Shizuku being ready: it opens the download page if Shizuku is not
+     * installed, opens Shizuku if it is not running, and asks for permission otherwise.
+     * @param context The context of the composable that calls this function.
+     */
+    fun setUp(context: Context) {
+        refresh()
+        when (_status.value) {
+            Status.NotInstalled -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DOWNLOAD_URL)))
+            Status.NotRunning -> openShizuku(context)
+            Status.PermissionNeeded -> if (Shizuku.shouldShowRequestPermissionRationale()) {
+                // The user chose not to be asked again, so this app can only be allowed from Shizuku itself
+                openShizuku(context)
+            } else {
+                Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
+            }
+
+            Status.Ready -> {}
+        }
+    }
+
+    private fun openShizuku(context: Context) {
+        val intent = context.packageManager.getLaunchIntentForPackage(PACKAGE_NAME) ?: return
+        context.startActivity(intent)
     }
 
     /**

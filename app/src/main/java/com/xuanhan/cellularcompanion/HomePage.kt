@@ -1,5 +1,6 @@
 package com.xuanhan.cellularcompanion
 
+import android.os.Build
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -34,14 +36,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.xuanhan.cellularcompanion.destinations.AboutDestination
 import com.xuanhan.cellularcompanion.destinations.ChangeHotspotCredentialsDestination
 import com.xuanhan.cellularcompanion.models.BluetoothModel
 import com.xuanhan.cellularcompanion.models.BluetoothModel.Companion.ConnectStatus
+import com.xuanhan.cellularcompanion.models.ShizukuModel
 import com.xuanhan.cellularcompanion.utilities.NoRippleTheme
 import com.xuanhan.cellularcompanion.viewmodels.HomePageViewModel
 
@@ -56,6 +62,7 @@ fun HomePage(navigator: DestinationsNavigator) {
     val isPressed by interactionSource.collectIsPressedAsState()
     val connectStatus by bluetoothModel.connectStatus.collectAsState()
     val isAwaitingUserHotspot by bluetoothModel.isAwaitingUserHotspot.collectAsState()
+    val shizukuStatus by ShizukuModel.status.collectAsState()
     val isShowingConfirmUnlinkDialog by viewModel.isShowingConfirmUnlinkDialog.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
@@ -86,6 +93,21 @@ fun HomePage(navigator: DestinationsNavigator) {
                 Text(text = "This will disconnect your phone from your Mac and you will need to go through setup again to reconnect.")
             }
         )
+    }
+
+    // Shizuku may have been installed, started or allowed while the user was away
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        ShizukuModel.initialize(context)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                ShizukuModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Scaffold {
@@ -193,6 +215,39 @@ fun HomePage(navigator: DestinationsNavigator) {
                     }
                 }
                 Spacer(modifier = Modifier.weight(1f))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    // Android 16+ only lets apps turn on the hotspot through Shizuku
+                    ListItem(
+                        leadingContent = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.outline_wifi_tethering_24),
+                                contentDescription = "Hotspot icon"
+                            )
+                        },
+                        headlineText = { Text("Turn on hotspot automatically") },
+                        supportingText = {
+                            Text(
+                                when (shizukuStatus) {
+                                    ShizukuModel.Status.NotInstalled -> "Install Shizuku to let Cellular turn on your hotspot"
+                                    ShizukuModel.Status.NotRunning -> "Start Shizuku to let Cellular turn on your hotspot"
+                                    ShizukuModel.Status.PermissionNeeded -> "Allow Cellular in Shizuku to let it turn on your hotspot"
+                                    ShizukuModel.Status.Ready -> "Cellular turns on your hotspot using Shizuku"
+                                }
+                            )
+                        },
+                        trailingContent = if (shizukuStatus == ShizukuModel.Status.Ready) {
+                            {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.outline_done_24),
+                                    contentDescription = "Done icon"
+                                )
+                            }
+                        } else null,
+                        modifier = Modifier.clickable(enabled = shizukuStatus != ShizukuModel.Status.Ready) {
+                            ShizukuModel.setUp(context)
+                        }
+                    )
+                }
                 ListItem(
                     leadingContent = {
                         Icon(
