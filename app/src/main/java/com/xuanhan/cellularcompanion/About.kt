@@ -32,8 +32,9 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 @Destination
 fun About(navigator: DestinationsNavigator) {
     val context = LocalContext.current
-    val websiteIntent = remember { Intent(Intent.ACTION_VIEW, Uri.parse("https://www.xuanhan.me")) }
-    val emailIntent = remember { Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:contact@xuanhan.me")) }
+    val versionName = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+    val sourceIntent = remember { Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nickredible/cellular-companion")) }
+    val macAppIntent = remember { Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nickredible/cellular/releases")) }
 
     Scaffold(topBar = {
         LargeTopAppBar(
@@ -63,11 +64,11 @@ fun About(navigator: DestinationsNavigator) {
             ) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    "v1.1.0",
+                    "v$versionName",
                     style = MaterialTheme.typography.displayLarge,
                 )
                 Spacer(modifier = Modifier.height(48.dp))
-                Text("© Xuan Han Tan 2023 - 2024. All rights reserved.\n\nThis app was developed by Xuan Han Tan. I hope you find it useful! If you want to learn more about me and my other projects, visit my website. If you have any questions, feel free to contact me by email.")
+                Text("Cellular Companion was created by Xuan Han Tan. This fork is by nickredible.\n\n© 2023 - 2024 Xuan Han Tan\n© 2026 nickredible\n\nThis app is free software under the GNU General Public License v3, and comes with no warranty.")
                 Spacer(modifier = Modifier.height(16.dp))
             }
             ListItem(
@@ -79,34 +80,34 @@ fun About(navigator: DestinationsNavigator) {
                 },
                 headlineText = {
                     Text(
-                        "Visit my website",
+                        "View source code",
                     )
                 },
                 modifier = Modifier.clickable {
                     try {
-                        context.startActivity(websiteIntent)
+                        context.startActivity(sourceIntent)
                     } catch (e: ActivityNotFoundException) {
-                        println("Failed to start website activity: $e")
+                        println("Failed to start source code activity: $e")
                     }
                 }
             )
             ListItem(
                 leadingContent = {
                     Icon(
-                        painter = painterResource(id = R.drawable.outline_email_24),
-                        contentDescription = "Email icon",
+                        painter = painterResource(id = R.drawable.outline_language_24),
+                        contentDescription = "Website icon",
                     )
                 },
                 headlineText = {
                     Text(
-                        "Email me",
+                        "Get Cellular for Mac",
                     )
                 },
                 modifier = Modifier.clickable {
                     try {
-                        context.startActivity(emailIntent)
+                        context.startActivity(macAppIntent)
                     } catch (e: ActivityNotFoundException) {
-                        println("Failed to start email activity: $e")
+                        println("Failed to start Mac app activity: $e")
                     }
                 }
             )
