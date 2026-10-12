@@ -62,6 +62,7 @@ dependencies {
     val shizukuVersion = "13.1.5"
     implementation("dev.rikka.shizuku:api:${shizukuVersion}")
     implementation("dev.rikka.shizuku:provider:${shizukuVersion}")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     implementation("androidx.navigation:navigation-compose:2.7.5")
     implementation("androidx.core:core-ktx:1.12.0")
