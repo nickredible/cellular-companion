@@ -10,7 +10,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.xuanhan.cellularcompanion"
+        applicationId = "io.github.nickredible.cellularcompanion"
         minSdk = 26
         targetSdk = 35
         versionCode = 14
