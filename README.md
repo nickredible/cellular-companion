@@ -8,6 +8,8 @@ Cellular Companion is the Android half of [Cellular](https://github.com/nickredi
 
 Download the latest APK from the [releases of this repository](https://github.com/nickredible/cellular-companion/releases) on your phone and open it. Android will ask you to allow your browser or file manager to install apps the first time. You also need [Cellular](https://github.com/nickredible/cellular/releases) on your Mac. Cellular Companion needs Android 8 or later.
 
+Cellular Companion checks for new releases once a day and lets you know when one is available, but you have to download and install it yourself. You can turn this off on the About screen.
+
 ## Turning on the hotspot on Android 16 and later
 
 Android 16 stopped letting apps turn on the hotspot by themselves. To let Cellular Companion do it, install and start [Shizuku](https://shizuku.rikka.app/), then tap **Turn on hotspot automatically** on Cellular Companion's home screen and allow it in Shizuku. Shizuku has to be started again after your phone restarts.

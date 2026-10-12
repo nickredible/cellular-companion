@@ -24,10 +24,12 @@ import com.xuanhan.cellularcompanion.bluetoothModel
 import com.xuanhan.cellularcompanion.broadcastreceivers.BluetoothStateBroadcastReceiver
 import com.xuanhan.cellularcompanion.createBluetoothNotification
 import com.xuanhan.cellularcompanion.isBluetoothEnabled
+import com.xuanhan.cellularcompanion.models.UpdateModel
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Timer
 import java.util.TimerTask
@@ -44,6 +46,7 @@ class BluetoothService : Service() {
     private val getBluetoothStateCoroutineScope = CoroutineScope(Dispatchers.IO + CoroutineName("GetBluetoothState"))
     private val getNetworkInfoCoroutineScope = CoroutineScope(Dispatchers.IO + CoroutineName("GetNetworkInfo"))
     private val updateStatusNotificationCoroutineScope = CoroutineScope(Dispatchers.IO + CoroutineName("UpdateStatusNotification"))
+    private val checkForUpdatesCoroutineScope = CoroutineScope(Dispatchers.IO + CoroutineName("CheckForUpdates"))
     private var prevModifiedSignalStrengthLevel = -1
     private var prevNetworkType = ""
     private var prevBatteryPercentage = -1
@@ -186,6 +189,14 @@ class BluetoothService : Service() {
 
             // Update Bluetooth enabled state
             isBluetoothEnabled.value = (applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter.isEnabled
+
+            // Check for updates now and then once a day
+            checkForUpdatesCoroutineScope.launch {
+                while (true) {
+                    UpdateModel.checkForUpdates(applicationContext)
+                    delay(UpdateModel.CHECK_INTERVAL_MS)
+                }
+            }
 
             // Initialise telephony manager
             telephonyManager =
@@ -363,6 +374,7 @@ class BluetoothService : Service() {
             getBluetoothStateCoroutineScope.cancel()
             getNetworkInfoCoroutineScope.cancel()
             updateStatusNotificationCoroutineScope.cancel()
+            checkForUpdatesCoroutineScope.cancel()
             prevModifiedSignalStrengthLevel = -1
             prevNetworkType = ""
             prevBatteryPercentage = -1

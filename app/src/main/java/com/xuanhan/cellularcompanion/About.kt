@@ -16,9 +16,14 @@ import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment.Companion.CenterHorizontally
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +31,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import com.xuanhan.cellularcompanion.models.UpdateModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +42,16 @@ fun About(navigator: DestinationsNavigator) {
     val versionName = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
     val sourceIntent = remember { Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nickredible/cellular-companion")) }
     val macAppIntent = remember { Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nickredible/cellular/releases")) }
+    val coroutineScope = rememberCoroutineScope()
+    var isCheckingForUpdates by remember { mutableStateOf(UpdateModel.isCheckingEnabled(context)) }
+
+    fun setCheckingForUpdates(isEnabled: Boolean) {
+        isCheckingForUpdates = isEnabled
+        UpdateModel.setCheckingEnabled(context, isEnabled)
+        if (isEnabled) {
+            coroutineScope.launch { UpdateModel.checkForUpdates(context) }
+        }
+    }
 
     Scaffold(topBar = {
         LargeTopAppBar(
@@ -110,6 +127,20 @@ fun About(navigator: DestinationsNavigator) {
                         println("Failed to start Mac app activity: $e")
                     }
                 }
+            )
+            ListItem(
+                leadingContent = {
+                    Icon(
+                        painter = painterResource(id = R.drawable.outline_download_24),
+                        contentDescription = "Download icon",
+                    )
+                },
+                headlineText = { Text("Check for updates") },
+                supportingText = { Text("Check GitHub once a day for a newer version") },
+                trailingContent = {
+                    Switch(checked = isCheckingForUpdates, onCheckedChange = { setCheckingForUpdates(it) })
+                },
+                modifier = Modifier.clickable { setCheckingForUpdates(!isCheckingForUpdates) }
             )
         }
     }

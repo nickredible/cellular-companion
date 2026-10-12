@@ -48,6 +48,7 @@ import com.xuanhan.cellularcompanion.destinations.ChangeHotspotCredentialsDestin
 import com.xuanhan.cellularcompanion.models.BluetoothModel
 import com.xuanhan.cellularcompanion.models.BluetoothModel.Companion.ConnectStatus
 import com.xuanhan.cellularcompanion.models.ShizukuModel
+import com.xuanhan.cellularcompanion.models.UpdateModel
 import com.xuanhan.cellularcompanion.utilities.NoRippleTheme
 import com.xuanhan.cellularcompanion.viewmodels.HomePageViewModel
 
@@ -63,6 +64,7 @@ fun HomePage(navigator: DestinationsNavigator) {
     val connectStatus by bluetoothModel.connectStatus.collectAsState()
     val isAwaitingUserHotspot by bluetoothModel.isAwaitingUserHotspot.collectAsState()
     val shizukuStatus by ShizukuModel.status.collectAsState()
+    val availableUpdate by UpdateModel.availableUpdate.collectAsState()
     val isShowingConfirmUnlinkDialog by viewModel.isShowingConfirmUnlinkDialog.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
@@ -215,6 +217,21 @@ fun HomePage(navigator: DestinationsNavigator) {
                     }
                 }
                 Spacer(modifier = Modifier.weight(1f))
+                availableUpdate?.let { release ->
+                    ListItem(
+                        leadingContent = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.outline_download_24),
+                                contentDescription = "Download icon"
+                            )
+                        },
+                        headlineText = { Text("Update available") },
+                        supportingText = { Text("Tap to download Cellular Companion ${release.version} from GitHub") },
+                        modifier = Modifier.clickable {
+                            context.startActivity(UpdateModel.releaseIntent(release))
+                        }
+                    )
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
                     // Android 16+ only lets apps turn on the hotspot through Shizuku
                     ListItem(
