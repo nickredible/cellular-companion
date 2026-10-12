@@ -31,6 +31,7 @@ import com.ramcosta.composedestinations.navigation.popUpTo
 import com.xuanhan.cellularcompanion.destinations.IntroDestination
 import com.xuanhan.cellularcompanion.destinations.SettingUpDestination
 import com.xuanhan.cellularcompanion.utilities.QRAnalyzer
+import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -100,7 +101,13 @@ fun PreviewViewComposable(navigator: DestinationsNavigator) {
                     .build()
                     .also {
                         it.setAnalyzer(cameraExecutor, QRAnalyzer { text ->
-                            val data = JSONObject(text)
+                            // Ignore QR codes that aren't Cellular's, like the download link the Mac shows during setup
+                            val data = try {
+                                JSONObject(text)
+                            } catch (e: JSONException) {
+                                println("QR code is not a Cellular pairing code.")
+                                return@QRAnalyzer
+                            }
                             if (!data.has("serviceUUID") || !data.has("sharedKey")) {
                                 println("No usable data found in QR Code.")
                                 return@QRAnalyzer
